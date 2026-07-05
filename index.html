@@ -11,7 +11,14 @@
 </head>
 <body class="bg-gray-100 min-h-screen flex flex-col items-center justify-center p-4 font-sans text-gray-800">
 
-    <div class="bg-white rounded-2xl shadow-xl w-full max-w-md p-6 flex flex-col items-center">
+    <!-- Full Screen Status Overlay -->
+    <div id="fullscreen-overlay" class="fixed inset-0 z-[100] hidden flex-col items-center justify-center text-white transition-all">
+        <div id="overlay-icon-container" class="mb-6"></div>
+        <h1 id="overlay-title" class="text-5xl md:text-6xl font-extrabold text-center px-4 tracking-tight drop-shadow-lg"></h1>
+        <p id="overlay-subtitle" class="text-xl md:text-2xl mt-4 text-center px-4 font-medium drop-shadow-md opacity-90"></p>
+    </div>
+
+    <div class="bg-white rounded-2xl shadow-xl w-full max-w-md p-6 flex flex-col items-center relative z-10">
         
         <div class="mb-6 text-center">
             <h1 class="text-2xl font-bold text-gray-900 mb-2">QR Scanner</h1>
@@ -59,7 +66,7 @@
 
         <!-- Results Area -->
         <div id="result-container" class="mt-6 w-full hidden flex-col">
-            <h3 class="text-sm font-semibold text-gray-500 uppercase tracking-wider mb-2">Scan Result</h3>
+            <h3 class="text-sm font-semibold text-gray-500 uppercase tracking-wider mb-2">Last Scan Result</h3>
             <div class="bg-gray-50 border border-gray-200 rounded-xl p-4 break-all shadow-inner">
                 <p id="scanned-result" class="text-gray-900 font-medium"></p>
             </div>
@@ -92,6 +99,9 @@
 
     <script>
         let html5QrCode;
+        let isProcessing = false; // Flags when the app is actively showing the overlay
+        let scannedCodes = new Set(); // Stores QR codes already processed in this session
+
         const readerElementId = "reader";
         
         // UI Elements
@@ -106,6 +116,12 @@
         const copyBtn = document.getElementById('copy-btn');
         const actionBtn = document.getElementById('action-btn');
 
+        // Overlay Elements
+        const overlay = document.getElementById('fullscreen-overlay');
+        const overlayIconContainer = document.getElementById('overlay-icon-container');
+        const overlayTitle = document.getElementById('overlay-title');
+        const overlaySubtitle = document.getElementById('overlay-subtitle');
+
         // New UI Elements for Sheets
         const sheetsContainer = document.getElementById('sheets-data-container');
         const sheetsLoading = document.getElementById('sheets-loading');
@@ -114,7 +130,11 @@
         // *** IMPORTANT: REPLACE WITH YOUR APPS SCRIPT WEB APP URL ***
         const APPS_SCRIPT_URL = "https://script.google.com/macros/s/AKfycby2KwSnwWKBOlz5g0SHTASuUgPZHyHJCh1gIo3FnlhSF3YOT3c4mWvYHxBCSUQP9xk2/exec";
 
-        // Check if string is a valid URL
+        const SVGs = {
+            success: `<svg class="w-32 h-32 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>`,
+            warning: `<svg class="w-32 h-32 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path></svg>`
+        };
+
         function isValidUrl(string) {
             try {
                 new URL(string);
@@ -124,10 +144,30 @@
             }
         }
 
+        function showOverlay(type, title, subtitle) {
+            // Reset classes
+            overlay.className = "fixed inset-0 z-[100] flex flex-col items-center justify-center text-white";
+            
+            if (type === 'success') {
+                overlay.classList.add('bg-green-600');
+                overlayIconContainer.innerHTML = SVGs.success;
+            } else if (type === 'warning') {
+                overlay.classList.add('bg-amber-500'); // Orange/Yellow
+                overlayIconContainer.innerHTML = SVGs.warning;
+            }
+
+            overlayTitle.textContent = title;
+            overlaySubtitle.textContent = subtitle;
+        }
+
+        function hideOverlay() {
+            overlay.classList.add('hidden');
+            overlay.classList.remove('flex');
+        }
+
         // Initialize Live Scanner
         function startScanner() {
             errorMessageEl.classList.add('hidden');
-            resultContainer.classList.add('hidden');
             
             if (!html5QrCode) {
                 html5QrCode = new Html5Qrcode(readerElementId);
@@ -147,8 +187,6 @@
                 placeholder.classList.add('hidden');
             }).catch((err) => {
                 console.error("Error starting camera", err);
-                
-                // User-friendly error explicitly directing them to the fallback
                 let errorMsg = "Could not start live camera due to browser/iframe restrictions. Please use the 'Take Photo / Upload Image' button below instead.";
                 showError(errorMsg);
             });
@@ -171,6 +209,8 @@
             stopBtn.classList.add('hidden');
             stopBtn.classList.remove('flex');
             placeholder.classList.remove('hidden');
+            resultContainer.classList.add('hidden');
+            resultContainer.classList.remove('flex');
             if (html5QrCode) {
                 html5QrCode.clear();
             }
@@ -183,8 +223,12 @@
 
         // Callback when QR is successfully scanned
         function onScanSuccess(decodedText) {
-            stopScanner();
+            // 1. Prevent scanning if we are currently showing an overlay
+            if (isProcessing) return;
             
+            isProcessing = true;
+            
+            // Show result block below scanner
             scannedResultEl.textContent = decodedText;
             resultContainer.classList.remove('hidden');
             resultContainer.classList.add('flex');
@@ -197,8 +241,31 @@
                 actionBtn.href = "#";
             }
 
-            // Fetch data from Google Sheets automatically
-            fetchSheetData(decodedText);
+            // 2. Deduplication & Overlay Logic
+            if (scannedCodes.has(decodedText)) {
+                // ALREADY SCANNED
+                showOverlay('warning', 'Already Checked In', `ID: ${decodedText}`);
+                
+                // Automatically restart camera (hide overlay) after 3 seconds
+                setTimeout(() => {
+                    hideOverlay();
+                    isProcessing = false;
+                }, 3000);
+
+            } else {
+                // NEW SCAN
+                scannedCodes.add(decodedText);
+                showOverlay('success', 'Checked In!', `ID: ${decodedText}`);
+                
+                // Send to backend quietly
+                fetchSheetData(decodedText);
+
+                // Automatically restart camera (hide overlay) after 3 seconds
+                setTimeout(() => {
+                    hideOverlay();
+                    isProcessing = false;
+                }, 3000);
+            }
         }
 
         async function fetchSheetData(scannedData) {
@@ -211,21 +278,15 @@
                 return;
             }
 
-            // Show loading state
             sheetsContainer.classList.remove('hidden');
             sheetsContainer.classList.add('flex');
             sheetsLoading.classList.remove('hidden');
             sheetsResult.classList.add('hidden');
 
             try {
-                // Send POST request to Apps Script
                 const response = await fetch(APPS_SCRIPT_URL, {
                     method: 'POST',
-                    headers: {
-                        // Crucial for Apps script CORS policies to avoid preflight
-                        'Content-Type': 'text/plain;charset=utf-8',
-                    },
-                    // Crucial for Apps script as POST returns a 302 redirect
+                    headers: { 'Content-Type': 'text/plain;charset=utf-8' },
                     redirect: 'follow', 
                     body: JSON.stringify({ action: 'process_qr', qrCode: scannedData })
                 });
@@ -247,7 +308,6 @@
                 console.error("Fetch Error:", error);
                 sheetsLoading.classList.add('hidden');
                 sheetsResult.classList.remove('hidden');
-                // Expanded error message for easier debugging
                 sheetsResult.innerHTML = `<p class="text-red-600 font-medium mb-1">Connection Blocked by CORS/Permissions</p><p class="text-gray-600 text-xs">Ensure your Google Apps Script is deployed as a Web App with access set strictly to <strong>"Anyone"</strong>, and deploy as a "New deployment" if you recently changed it.</p>`;
             }
         }
@@ -263,7 +323,7 @@
 
         // Native Camera / File Upload Fallback Logic
         fileBtn.addEventListener('click', () => {
-            fileInput.click(); // Open file dialog / native camera
+            fileInput.click(); 
         });
 
         fileInput.addEventListener('change', e => {
@@ -271,7 +331,6 @@
             
             const file = e.target.files[0];
             errorMessageEl.classList.add('hidden');
-            resultContainer.classList.add('hidden');
 
             if (!html5QrCode) {
                 html5QrCode = new Html5Qrcode(readerElementId);
@@ -280,21 +339,19 @@
             const originalBtnText = fileBtn.innerHTML;
             fileBtn.innerHTML = "Scanning image...";
 
-            // Scan the static image
             html5QrCode.scanFile(file, true)
                 .then(decodedText => {
                     onScanSuccess(decodedText);
                     fileBtn.innerHTML = originalBtnText;
-                    fileInput.value = ""; // Reset input
+                    fileInput.value = ""; 
                 })
                 .catch(err => {
                     showError("No QR code found in the image. Please try again or ensure the code is clear.");
                     fileBtn.innerHTML = originalBtnText;
-                    fileInput.value = ""; // Reset input
+                    fileInput.value = ""; 
                 });
         });
 
-        // Copy to clipboard fallback logic
         copyBtn.addEventListener('click', () => {
             const textToCopy = scannedResultEl.textContent;
             
