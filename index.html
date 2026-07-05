@@ -127,7 +127,7 @@
         const sheetsResult = document.getElementById('sheets-result');
 
         // *** IMPORTANT: REPLACE WITH YOUR APPS SCRIPT WEB APP URL ***
-        const  = "https://script.google.com/macros/s/AKfycby2KwSnwWKBOlz5g0SHTASuUgPZHyHJCh1gIo3FnlhSF3YOT3c4mWvYHxBCSUQP9xk2/exec";
+        const APPS_SCRIPT_URL = "https://script.google.com/macros/s/AKfycby2KwSnwWKBOlz5g0SHTASuUgPZHyHJCh1gIo3FnlhSF3YOT3c4mWvYHxBCSUQP9xk2/exec";
 
         const SVGs = {
             success: `<svg class="w-32 h-32 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>`,
@@ -256,7 +256,7 @@
         }
 
         async function fetchSheetData(scannedData) {
-            if (APPS_SCRIPT_URL === "https://script.google.com/macros/s/AKfycbzlJYNWU0qE1sM-d0mt2iKLDztQ-bUovg_rtvqz0FhRTu00hAi-uCLh80axKCNYb8QJ/exec") {
+            if (APPS_SCRIPT_URL === "YOUR_WEB_APP_URL_HERE") {
                 showOverlay('warning', 'Setup Required', 'Please set the APPS_SCRIPT_URL');
                 setTimeout(() => { hideOverlay(); isProcessing = false; }, 3000);
                 return;
