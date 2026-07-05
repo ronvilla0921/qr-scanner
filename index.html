@@ -99,8 +99,7 @@
 
     <script>
         let html5QrCode;
-        let isProcessing = false; // Flags when the app is actively showing the overlay
-        let scannedCodes = new Set(); // Stores QR codes already processed in this session
+        let isProcessing = false; // Flags when the app is actively verifying a code
 
         const readerElementId = "reader";
         
@@ -132,7 +131,9 @@
 
         const SVGs = {
             success: `<svg class="w-32 h-32 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>`,
-            warning: `<svg class="w-32 h-32 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path></svg>`
+            warning: `<svg class="w-32 h-32 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path></svg>`,
+            error: `<svg class="w-32 h-32 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M6 18L18 6M6 6l12 12"></path></svg>`,
+            loading: `<svg class="w-32 h-32 text-white animate-spin" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>`
         };
 
         function isValidUrl(string) {
@@ -154,6 +155,12 @@
             } else if (type === 'warning') {
                 overlay.classList.add('bg-amber-500'); // Orange/Yellow
                 overlayIconContainer.innerHTML = SVGs.warning;
+            } else if (type === 'error') {
+                overlay.classList.add('bg-red-600');
+                overlayIconContainer.innerHTML = SVGs.error;
+            } else if (type === 'loading') {
+                overlay.classList.add('bg-blue-600');
+                overlayIconContainer.innerHTML = SVGs.loading;
             }
 
             overlayTitle.textContent = title;
@@ -223,7 +230,7 @@
 
         // Callback when QR is successfully scanned
         function onScanSuccess(decodedText) {
-            // 1. Prevent scanning if we are currently showing an overlay
+            // 1. Prevent overlapping scans
             if (isProcessing) return;
             
             isProcessing = true;
@@ -241,40 +248,17 @@
                 actionBtn.href = "#";
             }
 
-            // 2. Deduplication & Overlay Logic
-            if (scannedCodes.has(decodedText)) {
-                // ALREADY SCANNED
-                showOverlay('warning', 'Already Checked In', `ID: ${decodedText}`);
-                
-                // Automatically restart camera (hide overlay) after 3 seconds
-                setTimeout(() => {
-                    hideOverlay();
-                    isProcessing = false;
-                }, 3000);
-
-            } else {
-                // NEW SCAN
-                scannedCodes.add(decodedText);
-                showOverlay('success', 'Checked In!', `ID: ${decodedText}`);
-                
-                // Send to backend quietly
-                fetchSheetData(decodedText);
-
-                // Automatically restart camera (hide overlay) after 3 seconds
-                setTimeout(() => {
-                    hideOverlay();
-                    isProcessing = false;
-                }, 3000);
-            }
+            // 2. Show Loading Overlay immediately
+            showOverlay('loading', 'Verifying...', `Checking ID: ${decodedText}`);
+            
+            // 3. Send to backend for verification
+            fetchSheetData(decodedText);
         }
 
         async function fetchSheetData(scannedData) {
-            if (APPS_SCRIPT_URL === "https://script.google.com/macros/s/AKfycby2KwSnwWKBOlz5g0SHTASuUgPZHyHJCh1gIo3FnlhSF3YOT3c4mWvYHxBCSUQP9xk2/exec") {
-                sheetsContainer.classList.remove('hidden');
-                sheetsContainer.classList.add('flex');
-                sheetsLoading.classList.add('hidden');
-                sheetsResult.classList.remove('hidden');
-                sheetsResult.innerHTML = `<p class="text-yellow-700"><strong>Note:</strong> Set your APPS_SCRIPT_URL in the code to connect to your sheets.</p>`;
+            if (APPS_SCRIPT_URL === "YOUR_WEB_APP_URL_HERE") {
+                showOverlay('warning', 'Setup Required', 'Please set the APPS_SCRIPT_URL');
+                setTimeout(() => { hideOverlay(); isProcessing = false; }, 3000);
                 return;
             }
 
@@ -296,19 +280,40 @@
                 sheetsLoading.classList.add('hidden');
                 sheetsResult.classList.remove('hidden');
 
+                // Determine Overlay Type based on Backend Response
                 if (data.success) {
+                    // Successful new check-in
+                    showOverlay('success', 'Checked In!', data.message || `ID: ${scannedData}`);
+                    
                     sheetsResult.innerHTML = `
                         <p><strong>Status:</strong> <span class="text-green-600 font-semibold">Processed Successfully</span></p>
                         <div class="mt-2 text-gray-700">${data.message}</div>
                     `;
+                } else if (data.status === 'duplicate' || (data.error && data.error.toLowerCase().includes('already'))) {
+                    // Backend says they already checked in
+                    showOverlay('warning', 'Already Checked In', data.error || `ID: ${scannedData}`);
+                    
+                    sheetsResult.innerHTML = `<p class="text-amber-600"><strong>Duplicate:</strong> ${data.error}</p>`;
                 } else {
+                    // ID not found in database or server error
+                    showOverlay('error', 'Scan Failed', data.error || `ID not recognized`);
+                    
                     sheetsResult.innerHTML = `<p class="text-red-600"><strong>Error:</strong> ${data.error}</p>`;
                 }
             } catch (error) {
                 console.error("Fetch Error:", error);
+                
+                showOverlay('error', 'Connection Error', 'Could not reach database');
+                
                 sheetsLoading.classList.add('hidden');
                 sheetsResult.classList.remove('hidden');
-                sheetsResult.innerHTML = `<p class="text-red-600 font-medium mb-1">Connection Blocked by CORS/Permissions</p><p class="text-gray-600 text-xs">Ensure your Google Apps Script is deployed as a Web App with access set strictly to <strong>"Anyone"</strong>, and deploy as a "New deployment" if you recently changed it.</p>`;
+                sheetsResult.innerHTML = `<p class="text-red-600 font-medium mb-1">Connection Error</p><p class="text-gray-600 text-xs">Could not reach the Apps Script backend.</p>`;
+            } finally {
+                // Automatically hide overlay and restart scanning after 3 seconds
+                setTimeout(() => {
+                    hideOverlay();
+                    isProcessing = false;
+                }, 3000);
             }
         }
 
