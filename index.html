@@ -221,7 +221,12 @@
                 // Send POST request to Apps Script
                 const response = await fetch(APPS_SCRIPT_URL, {
                     method: 'POST',
-                    // Note: sending as plain text avoids strict CORS preflight checks from GitHub to Google
+                    headers: {
+                        // Crucial for Apps script CORS policies to avoid preflight
+                        'Content-Type': 'text/plain;charset=utf-8',
+                    },
+                    // Crucial for Apps script as POST returns a 302 redirect
+                    redirect: 'follow', 
                     body: JSON.stringify({ action: 'process_qr', qrCode: scannedData })
                 });
 
@@ -242,7 +247,8 @@
                 console.error("Fetch Error:", error);
                 sheetsLoading.classList.add('hidden');
                 sheetsResult.classList.remove('hidden');
-                sheetsResult.innerHTML = `<p class="text-red-600">Failed to communicate with the database. Check console.</p>`;
+                // Expanded error message for easier debugging
+                sheetsResult.innerHTML = `<p class="text-red-600 font-medium mb-1">Connection Blocked by CORS/Permissions</p><p class="text-gray-600 text-xs">Ensure your Google Apps Script is deployed as a Web App with access set strictly to <strong>"Anyone"</strong>, and deploy as a "New deployment" if you recently changed it.</p>`;
             }
         }
 
